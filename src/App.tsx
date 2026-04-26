@@ -1,0 +1,833 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useEffect, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { motion, AnimatePresence, animate } from 'motion/react';
+import { Activity, Settings, X, Video, Download, RotateCcw } from 'lucide-react';
+
+interface DataNode {
+  obj: THREE.Sprite;
+  birth: number;
+  emissionTime: number;
+  freq: number;
+  amp: number;
+  color: THREE.Color;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  texture: THREE.CanvasTexture;
+  lastLifetimeUpdate: number;
+}
+
+export default function App() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  
+  // UI Display Refs (Optimized for performance outside of React State)
+  const timeDisplayRef = useRef<HTMLSpanElement>(null);
+  const ampDisplayRef = useRef<HTMLSpanElement>(null);
+  const spectralBarRef = useRef<HTMLDivElement>(null);
+  const lowPassRef = useRef<HTMLDivElement>(null);
+  const highPassRef = useRef<HTMLDivElement>(null);
+  
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [showControls, setShowControls] = useState(false);
+  
+  // Configuration State
+  const [fftSize, setFftSize] = useState(2048);
+  const [smoothing, setSmoothing] = useState(0.5);
+  const [palette, setPalette] = useState('Spectral');
+  const [nodeLife, setNodeLife] = useState(25);
+  const [nodeDensity, setNodeDensity] = useState(40);
+  const [bloomStrength, setBloomStrength] = useState(1.5);
+  const [orbitSpeed, setOrbitSpeed] = useState(1.0);
+  const [connectionDist, setConnectionDist] = useState(4.0);
+  const [manifoldScale, setManifoldScale] = useState(1.0);
+
+  // Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+
+  // Background Ripple Ref
+  const rippleRef = useRef<HTMLDivElement>(null);
+
+  // Palettes Definition
+  const PALETTES: Record<string, { low: [number, number, number], high: [number, number, number] }> = {
+    Spectral: { low: [0.66, 1.0, 0.6], high: [0.0, 1.0, 0.6] }, 
+    Sunset: { low: [0.85, 0.9, 0.5], high: [0.02, 1.0, 0.6] },   
+    Cyborg: { low: [0.55, 1.0, 0.5], high: [0.9, 1.0, 0.6] },   
+    Forest: { low: [0.35, 0.8, 0.4], high: [0.18, 1.0, 0.6] },   
+    Monochrome: { low: [0.6, 0.1, 0.4], high: [0.6, 0, 1.0] } 
+  };
+
+  // Three.js Core Refs
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const mainGroupRef = useRef<THREE.Group | null>(null);
+  const composerRef = useRef<any>(null);
+  
+  // Audio & Data Refs
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const dataArrayRef = useRef<Uint8Array | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const startTimeRef = useRef<number>(0);
+  
+  // Generative State Refs
+  const nodesRef = useRef<DataNode[]>([]);
+  const cursorRef = useRef(new THREE.Vector3(0, 0, 0));
+  const linesMeshRef = useRef<THREE.LineSegments | null>(null);
+
+  // Configuration Constants
+  const MAX_NODES = 400;
+  const MAX_LINES = 10000;
+
+  // Configuration Refs for the Animation Loop
+  const configRef = useRef({
+    fftSize,
+    smoothing,
+    palette,
+    nodeLife,
+    nodeDensity,
+    bloomStrength,
+    orbitSpeed,
+    connectionDist,
+    manifoldScale
+  });
+
+  useEffect(() => {
+    configRef.current = { fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale };
+    
+    // Immediate feedback on UI change
+    if (mainGroupRef.current) {
+      mainGroupRef.current.scale.set(manifoldScale, manifoldScale, manifoldScale);
+      // Small pulse on parameter change
+      animate(mainGroupRef.current.scale, { x: manifoldScale * 1.05, y: manifoldScale * 1.05, z: manifoldScale * 1.05 }, { duration: 0.1 }).then(() => {
+        animate(mainGroupRef.current.scale, { x: manifoldScale, y: manifoldScale, z: manifoldScale }, { duration: 0.2 });
+      });
+    }
+
+    if (analyserRef.current) {
+      analyserRef.current.fftSize = fftSize;
+      analyserRef.current.smoothingTimeConstant = smoothing;
+    }
+    
+    if (controlsRef.current) {
+      controlsRef.current.autoRotateSpeed = orbitSpeed;
+    }
+  }, [fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale]);
+
+  const initScene = () => {
+    if (!containerRef.current || !canvasRef.current) return;
+
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 45); 
+    cameraRef.current = camera;
+
+    scene.fog = new THREE.FogExp2(0x000000, 0.002);
+
+    const renderer = new THREE.WebGLRenderer({ 
+      antialias: false, // Disabling antialias for performance, bloom will smooth edges
+      canvas: canvasRef.current,
+      alpha: true,
+      preserveDrawingBuffer: true 
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Capped at 1.5 for performance
+    rendererRef.current = renderer;
+
+    // Post Processing Setup - Reduced Resolution for Bloom
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2), // Half-res bloom buffer
+      configRef.current.bloomStrength, 0.4, 0.85
+    );
+    composer.addPass(bloomPass);
+    composerRef.current = { composer, bloomPass };
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = configRef.current.orbitSpeed; 
+    controlsRef.current = controls;
+
+    const mainGroup = new THREE.Group();
+    scene.add(mainGroup);
+    mainGroupRef.current = mainGroup;
+
+    // Line Connections Mesh
+    const lineGeo = new THREE.BufferGeometry();
+    const linePositions = new Float32Array(MAX_LINES * 6);
+    const lineColors = new Float32Array(MAX_LINES * 6);
+    lineGeo.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+    lineGeo.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
+    lineGeo.setDrawRange(0, 0);
+
+    const lineMat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.2,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    const lines = new THREE.LineSegments(lineGeo, lineMat);
+    mainGroup.add(lines);
+    linesMeshRef.current = lines;
+
+    const handleResize = () => {
+      if (!cameraRef.current || !rendererRef.current || !composerRef.current) return;
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      
+      cameraRef.current.aspect = width / height;
+      cameraRef.current.updateProjectionMatrix();
+      
+      rendererRef.current.setSize(width, height);
+      composerRef.current.composer.setSize(width, height);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  };
+
+  const createNode = (amp: number, freqBin: number, emissionTime: number) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+
+    // Color Mapping: Use selected palette
+    const p = PALETTES[configRef.current.palette] || PALETTES.Spectral;
+    const normalizedFreq = Math.max(0, Math.min(1, (freqBin - 93) / (371 - 93)));
+    
+    // Lerp HSL values
+    const h = p.low[0] + normalizedFreq * (p.high[0] - p.low[0]);
+    const s = p.low[1] + normalizedFreq * (p.high[1] - p.low[1]);
+    const l = p.low[2] + normalizedFreq * (p.high[2] - p.low[2]);
+    const color = new THREE.Color().setHSL(h, s, l);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.font = '600 22px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    
+    ctx.fillText(amp.toFixed(4), 128, 80);
+    
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.font = '500 16px "JetBrains Mono", monospace';
+    ctx.fillText(`T+${emissionTime.toFixed(2)}`, 128, 195);
+
+    ctx.strokeStyle = color.getStyle();
+    ctx.lineWidth = 2;
+    ctx.strokeRect(110, 110, 36, 36);
+    
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = color.getStyle();
+    
+    ctx.fillStyle = 'white';
+    ctx.fillRect(125, 125, 6, 6);
+    ctx.shadowBlur = 0;
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    
+    const spriteMat = new THREE.SpriteMaterial({ 
+      map: texture, 
+      transparent: true, 
+      blending: THREE.AdditiveBlending,
+      depthTest: false 
+    });
+    
+    const sprite = new THREE.Sprite(spriteMat);
+    sprite.scale.set(4.5, 4.5, 1);
+    
+    sprite.position.copy(cursorRef.current);
+    mainGroupRef.current?.add(sprite);
+
+    return {
+      obj: sprite,
+      birth: Date.now(),
+      emissionTime,
+      freq: freqBin,
+      amp,
+      color,
+      canvas,
+      ctx,
+      texture,
+      lastLifetimeUpdate: 0
+    };
+  };
+
+  const updateNodeCanvas = (node: DataNode, lifetime: number) => {
+    // Optimization: Stop updating labels after 3 seconds of life
+    if (lifetime > 3.0) return;
+    
+    if (Math.abs(lifetime - node.lastLifetimeUpdate) < 0.2) return;
+    
+    const { ctx, texture } = node;
+    ctx.clearRect(0, 100, 95, 50); 
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    ctx.font = 'bold 20px "JetBrains Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(lifetime.toFixed(2), 95, 136);
+    
+    texture.needsUpdate = true;
+    node.lastLifetimeUpdate = lifetime;
+  };
+
+  const updateConnections = () => {
+    if (!linesMeshRef.current) return;
+    
+    const nodes = nodesRef.current;
+    const count = nodes.length;
+    const positions = linesMeshRef.current.geometry.attributes.position.array as Float32Array;
+    const colors = linesMeshRef.current.geometry.attributes.color.array as Float32Array;
+    
+    let lineIdx = 0;
+    const maxDistSq = configRef.current.connectionDist * configRef.current.connectionDist;
+
+    for (let i = 0; i < count; i++) {
+      const nodeA = nodes[i];
+      const posA = nodeA.obj.position;
+
+      // Local Sequential Connections (Timeline)
+      if (i > 0) {
+        addConnection(nodeA, nodes[i-1], positions, colors, lineIdx);
+        lineIdx += 6;
+      }
+
+      // Proximity Connections
+      // Complexity reduction: Only check a subset of nodes if the total count is high
+      const step = count > 150 ? 2 : 1; 
+      
+      for (let j = i + 2; j < count; j += step) {
+        if (lineIdx / 6 >= MAX_LINES) break;
+
+        const nodeB = nodes[j];
+        const distSq = posA.distanceToSquared(nodeB.obj.position);
+        
+        if (distSq < maxDistSq) {
+          addConnection(nodeA, nodeB, positions, colors, lineIdx);
+          lineIdx += 6;
+        }
+      }
+    }
+
+    linesMeshRef.current.geometry.setDrawRange(0, lineIdx / 3);
+    linesMeshRef.current.geometry.attributes.position.needsUpdate = true;
+    linesMeshRef.current.geometry.attributes.color.needsUpdate = true;
+  };
+
+  const addConnection = (n1: DataNode, n2: DataNode, pos: Float32Array, col: Float32Array, idx: number) => {
+    pos[idx+0] = n1.obj.position.x; pos[idx+1] = n1.obj.position.y; pos[idx+2] = n1.obj.position.z;
+    pos[idx+3] = n2.obj.position.x; pos[idx+4] = n2.obj.position.y; pos[idx+5] = n2.obj.position.z;
+
+    col[idx+0] = n1.color.r; col[idx+1] = n1.color.g; col[idx+2] = n1.color.b;
+    col[idx+3] = n2.color.r; col[idx+4] = n2.color.g; col[idx+5] = n2.color.b;
+  };
+
+  useEffect(() => {
+    let animationFrameId: number;
+    let lastConnectionUpdate = 0;
+    let peakDetected = false;
+    
+    const animate = () => {
+      animationFrameId = requestAnimationFrame(animate);
+
+      if (!analyserRef.current || !dataArrayRef.current || !sceneRef.current || !cameraRef.current || !rendererRef.current || !composerRef.current) return;
+
+      const timeNow = Date.now();
+      const runTime = (timeNow - startTimeRef.current) / 1000.0;
+
+      analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+
+      const minBin = 93;  
+      const maxBin = 371; 
+      let maxAmp = 0;
+      let targetBin = 0;
+
+      for (let i = minBin; i <= maxBin; i++) {
+        if (dataArrayRef.current[i] > maxAmp) {
+          maxAmp = dataArrayRef.current[i];
+          targetBin = i;
+        }
+      }
+
+      const normalizedAmp = maxAmp / 255.0;
+
+      // Update HUD and background ripple - Throttled to ~15fps for UI elements
+      if (timeNow % 64 < 16) {
+        if (timeDisplayRef.current) timeDisplayRef.current.innerText = runTime.toFixed(2);
+        if (ampDisplayRef.current) ampDisplayRef.current.innerText = normalizedAmp.toFixed(4);
+      }
+      
+      if (spectralBarRef.current) {
+        spectralBarRef.current.style.width = `${normalizedAmp * 100}%`;
+      }
+
+      // Frequency Indicators
+      const freqNorm = (targetBin - minBin) / (maxBin - minBin);
+      if (lowPassRef.current) {
+        lowPassRef.current.style.opacity = `${0.2 + (1 - freqNorm) * normalizedAmp * 2}`;
+        lowPassRef.current.style.color = (1 - freqNorm) > 0.7 ? '#60a5fa' : 'rgba(255,255,255,0.4)';
+      }
+      if (highPassRef.current) {
+        highPassRef.current.style.opacity = `${0.2 + freqNorm * normalizedAmp * 2}`;
+        highPassRef.current.style.color = freqNorm > 0.7 ? '#f87171' : 'rgba(255,255,255,0.4)';
+      }
+
+      // Background ripple on peak detection
+      if (normalizedAmp > 0.4 && !peakDetected) {
+        peakDetected = true;
+        if (rippleRef.current) {
+          rippleRef.current.style.transform = 'translate(-50%, -50%) scale(2)';
+          rippleRef.current.style.opacity = '1';
+          setTimeout(() => {
+            if (rippleRef.current) {
+              rippleRef.current.style.transform = 'translate(-50%, -50%) scale(3)';
+              rippleRef.current.style.opacity = '0';
+            }
+          }, 300);
+        }
+      } else if (normalizedAmp < 0.2) {
+        peakDetected = false;
+      }
+
+      // Update Bloom specifically
+      composerRef.current.bloomPass.strength = configRef.current.bloomStrength * (0.8 + normalizedAmp * 0.4);
+
+      if (normalizedAmp > 0.05) {
+        const freqNorm = (targetBin - minBin) / (maxBin - minBin);
+        
+        const x = Math.sin(runTime * 1.8) * 12 + (freqNorm - 0.5) * 20;
+        const y = Math.cos(runTime * 1.2) * 12 + (normalizedAmp * 15) - 5;
+        const z = Math.sin(runTime * 0.7) * 15;
+
+        cursorRef.current.lerp(new THREE.Vector3(x, y, z), 0.15);
+
+        if (nodesRef.current.length === 0 || (timeNow - nodesRef.current[nodesRef.current.length - 1].birth) > configRef.current.nodeDensity) {
+          nodesRef.current.push(createNode(normalizedAmp, targetBin, runTime));
+        }
+      }
+
+      for (let i = nodesRef.current.length - 1; i >= 0; i--) {
+        const node = nodesRef.current[i];
+        const lifetime = (timeNow - node.birth) / 1000.0;
+        
+        updateNodeCanvas(node, lifetime);
+
+        if (lifetime > configRef.current.nodeLife || nodesRef.current.length > MAX_NODES) {
+          mainGroupRef.current?.remove(node.obj);
+          node.texture.dispose();
+          node.obj.material.dispose();
+          nodesRef.current.splice(i, 1);
+        }
+      }
+
+      // Performance Optimization: Update connections every 50ms (20fps)
+      if (timeNow - lastConnectionUpdate > 50) {
+        updateConnections();
+        lastConnectionUpdate = timeNow;
+      }
+
+      if (controlsRef.current) controlsRef.current.update();
+      composerRef.current.composer.render();
+    };
+
+    if (isInitialized) {
+      animate();
+    }
+    
+    return () => {
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    };
+  }, [isInitialized]);
+
+  const initializeAudio = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      
+      analyser.fftSize = fftSize; 
+      analyser.smoothingTimeConstant = smoothing; 
+      source.connect(analyser);
+      
+      analyserRef.current = analyser;
+      dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
+      audioCtxRef.current = audioCtx;
+      startTimeRef.current = Date.now();
+      
+      setIsInitialized(true);
+      initScene();
+    } catch (err) {
+      console.error("Microphone access denied:", err);
+    }
+  };
+
+  const startRecording = () => {
+    if (!canvasRef.current || !audioStreamRef.current) return;
+    chunksRef.current = [];
+    const canvasStream = canvasRef.current.captureStream(60);
+    const tracks = [
+      ...canvasStream.getVideoTracks(),
+      ...audioStreamRef.current.getAudioTracks()
+    ];
+    const combinedStream = new MediaStream(tracks);
+    const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm' });
+    
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
+    
+    recorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      setVideoUrl(url);
+    };
+    
+    recorder.start();
+    mediaRecorderRef.current = recorder;
+    setIsRecording(true);
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative w-full h-screen bg-black overflow-hidden flex flex-col font-sans select-none">
+      <canvas id="visualizer-canvas" ref={canvasRef} className="absolute inset-0 w-full h-full block" />
+      
+      {/* Visual background atmospheric hint */}
+      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_50%_50%,rgba(15,15,20,0.4)_0%,transparent_70%)]" />
+
+      {/* Dynamic Background Ripple */}
+      <div 
+        ref={rippleRef}
+        className="absolute top-1/2 left-1/2 w-[500px] h-[500px] -translate-x-1/2 -translate-y-1/2 pointer-events-none rounded-full border border-white/5 opacity-0 transition-all duration-700 ease-out z-0"
+        style={{ transform: 'translate(-50%, -50%) scale(1)' }}
+      />
+
+      <AnimatePresence>
+        {!isInitialized && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0, scale: 1.05, filter: "blur(10px)" }}
+            transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+            className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          >
+            <div className="text-center flex flex-col items-center p-6">
+              <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.2, duration: 0.8 }}
+              >
+                <Activity className="w-16 h-16 text-white/40 mb-8 stroke-[1px]" />
+              </motion.div>
+              
+              <motion.h1 
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.3, duration: 0.8 }}
+                className="text-3xl sm:text-5xl tracking-[0.2em] text-white font-extralight mb-4 uppercase text-center"
+              >
+                Seeing Birdsong
+              </motion.h1>
+              
+              <motion.p 
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.4, duration: 0.8 }}
+                className="text-[9px] sm:text-[10px] text-white/40 tracking-[0.3em] sm:tracking-[0.5em] mb-12 max-w-xs sm:max-w-sm uppercase font-medium text-center"
+              >
+                Acoustic Manifold Extraction & Mapping
+              </motion.p>
+              
+              <motion.button 
+                id="init-audio-btn"
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.5, duration: 0.8 }}
+                whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.08)" }}
+                whileTap={{ scale: 0.98 }}
+                onClick={initializeAudio}
+                className="px-8 sm:px-10 py-3 sm:py-4 glass-pill text-white/70 uppercase tracking-[0.2em] text-[10px] font-semibold transition-all cursor-pointer hover:text-white"
+              >
+                Initialize Interface
+              </motion.button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
+      <AnimatePresence>
+        {isInitialized && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            transition={{ delay: 0.8, duration: 1.5, ease: "easeOut" }}
+            className="absolute inset-x-0 inset-y-0 pointer-events-none z-10 p-6 sm:p-10 flex flex-col justify-between"
+          >
+            {/* Top Bar Indicators */}
+            <div className="flex justify-between items-start w-full relative">
+              <div className="flex flex-col gap-3 sm:gap-4">
+                <div className="glass-pill px-4 sm:px-5 py-1.5 sm:py-2 flex items-center gap-2.5 w-fit">
+                   <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                   <span className="text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold text-white/80">System Live</span>
+                </div>
+                
+                <div className="glass px-4 sm:px-5 py-2.5 sm:py-3 rounded-2xl flex flex-col gap-1 w-32 sm:w-48">
+                   <div className="flex justify-between items-center text-[8px] sm:text-[9px] uppercase tracking-widest text-white/40 font-bold mb-1">
+                      <span className="hidden sm:inline">Spectral Density</span>
+                      <span className="sm:hidden">Density</span>
+                      <span ref={ampDisplayRef} className="text-white/70 text-[10px] sm:text-xs">0.0000</span>
+                   </div>
+                   <div className="h-0.5 sm:h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                      <div 
+                        ref={spectralBarRef}
+                        className="h-full bg-white/40 transition-[width] duration-75 ease-out"
+                        style={{ width: "0%" }}
+                      />
+                   </div>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-4 sm:gap-8 pointer-events-auto">
+                <div className="flex gap-2">
+                  {videoUrl && !isRecording && (
+                    <motion.a
+                      href={videoUrl}
+                      download="birdsong-record.webm"
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      className="glass-pill p-2 sm:p-3 text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+                    >
+                      <Download size={18} />
+                    </motion.a>
+                  )}
+                  <motion.button
+                    whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.1)" }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={isRecording ? stopRecording : startRecording}
+                    className={`glass-pill p-2 sm:p-3 transition-colors cursor-pointer ${isRecording ? 'text-red-500 animate-pulse border-red-500/50' : 'text-white/60 hover:text-white'}`}
+                  >
+                    {isRecording ? <RotateCcw size={18} /> : <Video size={18} />}
+                  </motion.button>
+                </div>
+
+                <motion.button
+                  whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.1)" }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setShowControls(!showControls)}
+                  className="glass-pill p-2 sm:p-3 text-white/60 hover:text-white transition-colors cursor-pointer"
+                >
+                  {showControls ? <X size={18} /> : <Settings size={18} />}
+                </motion.button>
+
+                <div className="hidden sm:flex flex-col gap-2 text-right">
+                  <div className="text-[10px] font-mono text-white/50 tracking-wider uppercase">Engine / v1.4.2</div>
+                  <div className="text-2xl font-mono text-white/90 font-light tracking-tighter">
+                     T+<span ref={timeDisplayRef}>0.00</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Settings Panel */}
+              <AnimatePresence>
+                {showControls && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                    className="absolute top-16 sm:top-20 right-0 w-full sm:w-96 glass-card p-6 z-50 pointer-events-auto h-[70vh] overflow-y-auto"
+                  >
+                    <div className="flex flex-col gap-5 sm:gap-6">
+                      <div className="flex flex-col gap-3">
+                        <label className="text-[9px] sm:text-[10px] uppercase tracking-widest text-white/40 font-bold">Acoustic Palette</label>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {Object.keys(PALETTES).map(p => (
+                            <button
+                              key={p}
+                              onClick={() => setPalette(p)}
+                              className={`px-3 py-2 text-[10px] text-center rounded-lg transition-all ${palette === p ? 'bg-white/10 text-white border border-white/20' : 'text-white/40 hover:bg-white/5 border border-transparent'}`}
+                            >
+                              {p}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                            <span>Smoothing</span>
+                            <span className="text-white/80">{smoothing.toFixed(2)}</span>
+                          </div>
+                          <input 
+                            type="range" min="0" max="0.95" step="0.01" 
+                            value={smoothing} onChange={(e) => setSmoothing(parseFloat(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                            <span>Bloom</span>
+                            <span className="text-white/80">{bloomStrength.toFixed(1)}</span>
+                          </div>
+                          <input 
+                            type="range" min="0" max="3" step="0.1" 
+                            value={bloomStrength} onChange={(e) => setBloomStrength(parseFloat(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                            <span>Orbit</span>
+                            <span className="text-white/80">{orbitSpeed.toFixed(1)}</span>
+                          </div>
+                          <input 
+                            type="range" min="0" max="5" step="0.1" 
+                            value={orbitSpeed} onChange={(e) => setOrbitSpeed(parseFloat(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                            <span>Links</span>
+                            <span className="text-white/80">{connectionDist.toFixed(1)}</span>
+                          </div>
+                          <input 
+                            type="range" min="1" max="10" step="0.1" 
+                            value={connectionDist} onChange={(e) => setConnectionDist(parseFloat(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                            <span>Density</span>
+                            <span className="text-white/80">{nodeDensity}</span>
+                          </div>
+                          <input 
+                            type="range" min="10" max="250" step="5" 
+                            value={nodeDensity} onChange={(e) => setNodeDensity(parseInt(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                            <span>Scale</span>
+                            <span className="text-white/80">{manifoldScale.toFixed(2)}</span>
+                          </div>
+                          <input 
+                            type="range" min="0.5" max="2.5" step="0.05" 
+                            value={manifoldScale} onChange={(e) => setManifoldScale(parseFloat(e.target.value))}
+                            className="w-full"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 pt-2 border-t border-white/5">
+                        <label className="text-[9px] uppercase tracking-widest text-white/40 font-bold">FFT Resolution</label>
+                        <div className="flex gap-2">
+                          {[1024, 2048, 4096].map(size => (
+                            <button
+                              key={size}
+                              onClick={() => setFftSize(size)}
+                              className={`flex-1 py-2 text-[10px] rounded-lg transition-all ${fftSize === size ? 'bg-white/20 text-white font-bold border border-white/30' : 'text-white/30 bg-white/5 border border-transparent'}`}
+                            >
+                              {size}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Bottom Section */}
+            <div className="flex flex-col sm:flex-row justify-between items-center sm:items-end w-full gap-8 sm:gap-0">
+              {/* Observation Feed Card - Hidden on very small mobile */}
+              <div className="hidden sm:flex glass-card w-48 h-64 p-1 group relative overflow-hidden">
+                 <img 
+                   src="https://images.unsplash.com/photo-1552728089-57168bb3fc74?auto=format&fit=crop&w=400&q=80" 
+                   className="w-full h-full object-cover filter brightness-90 contrast-110" 
+                   alt="Observation Stream" 
+                   referrerPolicy="no-referrer"
+                 />
+                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+                 <div className="absolute top-4 left-4 flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                    <span className="text-[9px] font-bold text-white tracking-[0.2em] uppercase drop-shadow-md">LIVE Feed</span>
+                 </div>
+                 <div className="absolute bottom-4 left-4 right-4 text-left">
+                    <div className="text-[8px] text-white/60 tracking-widest uppercase font-bold mb-0.5">Cam / S-04</div>
+                    <div className="text-[10px] text-white font-medium tracking-wide">Eurasian Woodlands</div>
+                 </div>
+              </div>
+
+              {/* Central Identity */}
+              <div className="flex flex-col items-center mb-0 sm:mb-4 px-4 order-first sm:order-none">
+                <div className="text-[8px] sm:text-[10px] font-bold uppercase tracking-[0.3em] sm:tracking-[0.5em] text-white/20 mb-2">Acoustical Subject</div>
+                <h2 className="text-xl sm:text-3xl font-serif italic text-white/95 text-center leading-tight">
+                   Sylvia atricapilla
+                </h2>
+                <div className="flex sm:hidden mt-4 font-mono text-[9px] uppercase tracking-widest text-white/30 gap-4">
+                  <span>T+<span ref={timeDisplayRef}>0.00</span></span>
+                  <span>v1.4.2</span>
+                </div>
+              </div>
+
+              {/* Right Side Spectrum Capsule - Optimized for mobile */}
+              <div className="flex flex-row sm:flex-col items-center gap-6 mb-2 sm:mb-4 w-full sm:w-auto px-4 sm:px-0">
+                <div className="hidden sm:flex glass-pill w-12 py-6 flex flex-col items-center justify-between h-64">
+                   <div ref={highPassRef} className="text-[9px] font-mono text-white/40 origin-center -rotate-90 whitespace-nowrap mb-2 transition-colors duration-200">High Pass</div>
+                   <div className="flex-1 w-px bg-white/10 relative my-4">
+                      <div className="absolute top-0 w-1 h-1 -left-[1.5px] rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
+                      <div className="absolute bottom-0 w-1 h-1 -left-[1.5px] rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                   </div>
+                   <div ref={lowPassRef} className="text-[9px] font-mono text-white/40 origin-center -rotate-90 whitespace-nowrap mt-2 transition-colors duration-200">Low Pass</div>
+                </div>
+                <div className="sm:hidden flex-1 h-px bg-white/10 relative">
+                   <div className="absolute left-0 w-1 h-1 -top-[1.5px] rounded-full bg-blue-500" />
+                   <div className="absolute right-0 w-1 h-1 -top-[1.5px] rounded-full bg-red-500" />
+                </div>
+                <div className="text-[9px] font-mono text-white/40 tracking-widest uppercase">Band / 2-8k</div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
