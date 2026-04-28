@@ -649,7 +649,7 @@ export default function App() {
                 </motion.button>
 
                 <div className="hidden sm:flex flex-col gap-2 text-right">
-                  <div className="text-[10px] font-mono text-white/50 tracking-wider uppercase">Engine / v1.4.2</div>
+                  <div className="text-[10px] font-mono text-white/50 tracking-wider uppercase">Made with love by Pickko</div>
                   <div className="text-2xl font-mono text-white/90 font-light tracking-tighter">
                      T+<span ref={timeDisplayRef}>0.00</span>
                   </div>
@@ -804,7 +804,7 @@ export default function App() {
                 </h2>
                 <div className="flex sm:hidden mt-4 font-mono text-[9px] uppercase tracking-widest text-white/30 gap-4">
                   <span>T+<span ref={timeDisplayRef}>0.00</span></span>
-                  <span>v1.4.2</span>
+                  <span>Made with love by Pickko</span>
                 </div>
               </div>
 

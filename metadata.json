@@ -1,6 +1,6 @@
 {
-  "name": "Seeing Birdsong",
-  "description": "A 3D generative acoustic analysis tool that transforms bird songs and environmental sounds into complex geometric manifolds in real-time.",
+  "name": "Pickko: Song Visualization",
+  "description": "A 3D generative acoustic analysis tool that transforms bird songs and environmental sounds into complex geometric manifolds in real-time, made in memory of Pickko.",
   "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["Acoustic Analysis", "Three.js Visualization"]
 }
