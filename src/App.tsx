@@ -3,14 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { motion, AnimatePresence, animate } from 'motion/react';
-import { Activity, Settings, X, Video, Download, RotateCcw } from 'lucide-react';
+import { Activity, Settings, X, Video, Download, RotateCcw, Star, Info } from 'lucide-react';
 
 interface DataNode {
   obj: THREE.Sprite;
@@ -25,6 +25,71 @@ interface DataNode {
   lastLifetimeUpdate: number;
 }
 
+const DEFAULTS = {
+  fftSize: 4096,
+  smoothing: 0.1,
+  palette: 'Sunset',
+  nodeLife: 25,
+  nodeDensity: 10,
+  bloomStrength: 0.2,
+  orbitSpeed: 0.4,
+  connectionDist: 6.9,
+  manifoldScale: 1.0,
+  highPassFreq: 20,
+  lowPassFreq: 20000,
+  eqBands: {
+    60: 0,
+    170: 0,
+    310: 0,
+    600: 0,
+    1000: 0,
+    3000: 0,
+    6000: 0,
+    12000: 0,
+    14000: 0,
+    16000: 0
+  }
+};
+
+const loadConfig = () => {
+  try {
+    const saved = localStorage.getItem('pickko-config');
+    if (saved) return JSON.parse(saved);
+  } catch (e) {
+    console.error('Failed to load local config', e);
+  }
+  return DEFAULTS;
+};
+
+// --- Subcomponents ---
+
+// --- Rating Prompt ---
+const RatingPrompt = ({ onClose, onRate }: { onClose: () => void, onRate: () => void }) => {
+  return (
+      <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 pointer-events-auto">
+        <motion.div 
+           initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+           className="glass-card w-full max-w-sm p-8 flex flex-col items-center justify-center relative text-center border border-white/15"
+        >
+             <button onClick={onClose} aria-label="Dismiss Rating" className="absolute top-4 right-4 text-white/50 hover:text-white cursor-pointer transition-colors">
+               <X size={18} />
+             </button>
+             <Star className="w-12 h-12 text-yellow-400/90 mb-6 drop-shadow-[0_0_15px_rgba(250,204,21,0.4)]" />
+             <h3 className="text-white uppercase tracking-[0.15em] text-sm font-bold mb-3">Harmonization Complete</h3>
+             <p className="text-white/50 text-[10px] tracking-widest uppercase leading-relaxed mb-8 max-w-[250px]">
+               If this experience resonates with your frequency, please consider reviewing us.
+             </p>
+             <button onClick={onRate} className="w-full glass-pill py-3 text-white uppercase tracking-widest text-[10px] font-bold hover:bg-white/20 transition-all mb-4 cursor-pointer shadow-[0_0_20px_rgba(255,255,255,0.05)]">
+               Rate on Play Store
+             </button>
+             <button onClick={onClose} className="text-white/30 text-[9px] uppercase tracking-widest hover:text-white/60 transition-colors cursor-pointer">
+               Maybe Later
+             </button>
+        </motion.div>
+      </div>
+  );
+};
+
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,22 +98,77 @@ export default function App() {
   const timeDisplayRef = useRef<HTMLSpanElement>(null);
   const ampDisplayRef = useRef<HTMLSpanElement>(null);
   const spectralBarRef = useRef<HTMLDivElement>(null);
-  const lowPassRef = useRef<HTMLDivElement>(null);
-  const highPassRef = useRef<HTMLDivElement>(null);
   
   const [isInitialized, setIsInitialized] = useState(false);
   const [showControls, setShowControls] = useState(false);
   
+  const configInit = useMemo(() => loadConfig(), []);
+  
   // Configuration State
-  const [fftSize, setFftSize] = useState(2048);
-  const [smoothing, setSmoothing] = useState(0.5);
-  const [palette, setPalette] = useState('Spectral');
-  const [nodeLife, setNodeLife] = useState(25);
-  const [nodeDensity, setNodeDensity] = useState(40);
-  const [bloomStrength, setBloomStrength] = useState(1.5);
-  const [orbitSpeed, setOrbitSpeed] = useState(1.0);
-  const [connectionDist, setConnectionDist] = useState(4.0);
-  const [manifoldScale, setManifoldScale] = useState(1.0);
+  const [fftSize, setFftSize] = useState(configInit.fftSize ?? DEFAULTS.fftSize);
+  const [smoothing, setSmoothing] = useState(configInit.smoothing ?? DEFAULTS.smoothing);
+  const [palette, setPalette] = useState(configInit.palette ?? DEFAULTS.palette);
+  const [nodeLife, setNodeLife] = useState(configInit.nodeLife ?? DEFAULTS.nodeLife);
+  const [nodeDensity, setNodeDensity] = useState(configInit.nodeDensity ?? DEFAULTS.nodeDensity);
+  const [bloomStrength, setBloomStrength] = useState(configInit.bloomStrength ?? DEFAULTS.bloomStrength);
+  const [orbitSpeed, setOrbitSpeed] = useState(configInit.orbitSpeed ?? DEFAULTS.orbitSpeed);
+  const [connectionDist, setConnectionDist] = useState(configInit.connectionDist ?? DEFAULTS.connectionDist);
+  const [manifoldScale, setManifoldScale] = useState<number>(configInit.manifoldScale ?? DEFAULTS.manifoldScale);
+  const [highPassFreq, setHighPassFreq] = useState<number>(configInit.highPassFreq ?? DEFAULTS.highPassFreq);
+  const [lowPassFreq, setLowPassFreq] = useState<number>(configInit.lowPassFreq ?? DEFAULTS.lowPassFreq);
+  const [eqBands, setEqBands] = useState<Record<string, number>>(configInit.eqBands ?? DEFAULTS.eqBands);
+  const [activeTab, setActiveTab] = useState<'essence' | 'resonance'>('essence');
+
+  // Feedback & Rating State
+  const [showRatingPrompt, setShowRatingPrompt] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const happyPathCountRef = useRef(0);
+
+  useEffect(() => {
+    try {
+      const state = { fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, highPassFreq, lowPassFreq, eqBands };
+      localStorage.setItem('pickko-config', JSON.stringify(state));
+    } catch (e) {
+      console.warn('Failed to save to local storage', e);
+    }
+  }, [fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, highPassFreq, lowPassFreq, eqBands]);
+
+  const handleRateApp = () => {
+    localStorage.setItem('pickko-has-rated', 'true');
+    setShowRatingPrompt(false);
+    // In a production PWA or TWA snippet, this routes to the real Play Store URI
+    if (typeof window !== 'undefined') {
+       window.open('https://play.google.com/store/apps/details?id=com.pickko.app', '_blank');
+    }
+  };
+
+  const resetToDefaults = () => {
+    setFftSize(DEFAULTS.fftSize);
+    setSmoothing(DEFAULTS.smoothing);
+    setPalette(DEFAULTS.palette);
+    setNodeLife(DEFAULTS.nodeLife);
+    setNodeDensity(DEFAULTS.nodeDensity);
+    setBloomStrength(DEFAULTS.bloomStrength);
+    setOrbitSpeed(DEFAULTS.orbitSpeed);
+    setConnectionDist(DEFAULTS.connectionDist);
+    setManifoldScale(DEFAULTS.manifoldScale);
+    setHighPassFreq(DEFAULTS.highPassFreq);
+    setLowPassFreq(DEFAULTS.lowPassFreq);
+    setEqBands(DEFAULTS.eqBands);
+    
+    // Reset filters if they exist
+    if (highPassNodeRef.current) highPassNodeRef.current.frequency.setTargetAtTime(DEFAULTS.highPassFreq, audioCtxRef.current!.currentTime, 0.05);
+    if (lowPassNodeRef.current) lowPassNodeRef.current.frequency.setTargetAtTime(DEFAULTS.lowPassFreq, audioCtxRef.current!.currentTime, 0.05);
+    
+    if (filterNodesRef.current) {
+      Object.keys(DEFAULTS.eqBands).forEach((freq, idx) => {
+        const val = DEFAULTS.eqBands[freq as unknown as keyof typeof DEFAULTS.eqBands];
+        if (filterNodesRef.current[idx]) {
+          filterNodesRef.current[idx].gain.setTargetAtTime(val, audioCtxRef.current!.currentTime, 0.05);
+        }
+      });
+    }
+  };
 
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
@@ -79,6 +199,9 @@ export default function App() {
   
   // Audio & Data Refs
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const filterNodesRef = useRef<BiquadFilterNode[]>([]);
+  const highPassNodeRef = useRef<BiquadFilterNode | null>(null);
+  const lowPassNodeRef = useRef<BiquadFilterNode | null>(null);
   const dataArrayRef = useRef<Uint8Array | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const startTimeRef = useRef<number>(0);
@@ -382,17 +505,6 @@ export default function App() {
         spectralBarRef.current.style.width = `${normalizedAmp * 100}%`;
       }
 
-      // Frequency Indicators
-      const freqNorm = (targetBin - minBin) / (maxBin - minBin);
-      if (lowPassRef.current) {
-        lowPassRef.current.style.opacity = `${0.2 + (1 - freqNorm) * normalizedAmp * 2}`;
-        lowPassRef.current.style.color = (1 - freqNorm) > 0.7 ? '#60a5fa' : 'rgba(255,255,255,0.4)';
-      }
-      if (highPassRef.current) {
-        highPassRef.current.style.opacity = `${0.2 + freqNorm * normalizedAmp * 2}`;
-        highPassRef.current.style.color = freqNorm > 0.7 ? '#f87171' : 'rgba(255,255,255,0.4)';
-      }
-
       // Background ripple on peak detection
       if (normalizedAmp > 0.4 && !peakDetected) {
         peakDetected = true;
@@ -401,10 +513,19 @@ export default function App() {
           rippleRef.current.style.opacity = '1';
           setTimeout(() => {
             if (rippleRef.current) {
-              rippleRef.current.style.transform = 'translate(-50%, -50%) scale(3)';
-              rippleRef.current.style.opacity = '0';
+               rippleRef.current.style.transform = 'translate(-50%, -50%) scale(3)';
+               rippleRef.current.style.opacity = '0';
             }
           }, 300);
+        }
+        
+        // Intelligent Rating Request hook (triggers on 100th "peak" experienced)
+        happyPathCountRef.current++;
+        if (happyPathCountRef.current === 100) {
+           const hasRated = localStorage.getItem('pickko-has-rated');
+           if (!hasRated && !showRatingPrompt) {
+               setShowRatingPrompt(true);
+           }
         }
       } else if (normalizedAmp < 0.2) {
         peakDetected = false;
@@ -470,44 +591,126 @@ export default function App() {
       
       analyser.fftSize = fftSize; 
       analyser.smoothingTimeConstant = smoothing; 
-      source.connect(analyser);
+      
+      // Create High Pass / Low Pass
+      const highPassNode = audioCtx.createBiquadFilter();
+      highPassNode.type = 'highpass';
+      highPassNode.frequency.value = highPassFreq;
+      highPassNode.Q.value = 0.707;
+      highPassNodeRef.current = highPassNode;
+      
+      const lowPassNode = audioCtx.createBiquadFilter();
+      lowPassNode.type = 'lowpass';
+      lowPassNode.frequency.value = lowPassFreq;
+      lowPassNode.Q.value = 0.707;
+      lowPassNodeRef.current = lowPassNode;
+
+      // Create Equalizer Chain
+      const freqs = Object.keys(eqBands).map(Number);
+      const filters = freqs.map((freq, i) => {
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = i === 0 ? 'lowshelf' : i === freqs.length - 1 ? 'highshelf' : 'peaking';
+        filter.frequency.value = freq;
+        filter.Q.value = 1.0;
+        filter.gain.value = eqBands[freq as keyof typeof eqBands];
+        return filter;
+      });
+
+      filterNodesRef.current = filters;
+
+      // Connect source -> highPass -> lowPass -> EQ -> analyser
+      source.connect(highPassNode);
+      highPassNode.connect(lowPassNode);
+      
+      let lastNode: AudioNode = lowPassNode;
+      filters.forEach(filter => {
+        lastNode.connect(filter);
+        lastNode = filter;
+      });
+      lastNode.connect(analyser);
       
       analyserRef.current = analyser;
       dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
       audioCtxRef.current = audioCtx;
       startTimeRef.current = Date.now();
       
+      setAudioError(null);
       setIsInitialized(true);
       initScene();
-    } catch (err) {
-      console.error("Microphone access denied:", err);
+    } catch (err: any) {
+      console.error("Audio Initialization Failed:", err);
+      if (err.name === 'NotAllowedError') {
+        setAudioError('Microphone access was denied. Please allow it in site settings.');
+      } else if (err.name === 'NotFoundError') {
+        setAudioError('No microphone detected on this device.');
+      } else {
+        setAudioError('An unexpected error occurred capturing audio.');
+      }
     }
+  };
+
+  const updateEqBand = (freq: number, gain: number) => {
+    const idx = Object.keys(eqBands).indexOf(freq.toString());
+    if (idx !== -1 && filterNodesRef.current[idx] && audioCtxRef.current) {
+      filterNodesRef.current[idx].gain.setTargetAtTime(gain, audioCtxRef.current.currentTime, 0.05);
+    }
+    setEqBands(prev => ({ ...prev, [freq]: gain }));
+  };
+
+  const updateHighPass = (freq: number) => {
+    if (highPassNodeRef.current && audioCtxRef.current) {
+      highPassNodeRef.current.frequency.setTargetAtTime(freq, audioCtxRef.current.currentTime, 0.05);
+    }
+    setHighPassFreq(freq);
+  };
+
+  const updateLowPass = (freq: number) => {
+    if (lowPassNodeRef.current && audioCtxRef.current) {
+      lowPassNodeRef.current.frequency.setTargetAtTime(freq, audioCtxRef.current.currentTime, 0.05);
+    }
+    setLowPassFreq(freq);
   };
 
   const startRecording = () => {
     if (!canvasRef.current || !audioStreamRef.current) return;
-    chunksRef.current = [];
-    const canvasStream = canvasRef.current.captureStream(60);
-    const tracks = [
-      ...canvasStream.getVideoTracks(),
-      ...audioStreamRef.current.getAudioTracks()
-    ];
-    const combinedStream = new MediaStream(tracks);
-    const recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm' });
-    
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      setVideoUrl(url);
-    };
-    
-    recorder.start();
-    mediaRecorderRef.current = recorder;
-    setIsRecording(true);
+    try {
+      chunksRef.current = [];
+      const canvasStream = canvasRef.current.captureStream(60);
+      const tracks = [
+        ...canvasStream.getVideoTracks(),
+        ...audioStreamRef.current.getAudioTracks()
+      ];
+      const combinedStream = new MediaStream(tracks);
+      
+      // Fallback MIME types for cross-browser support
+      let options = { mimeType: 'video/webm;codecs=vp9' };
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options = { mimeType: 'video/webm' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          options = { mimeType: 'video/mp4' };
+        }
+      }
+      
+      const recorder = new MediaRecorder(combinedStream, options);
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: options.mimeType });
+        const url = URL.createObjectURL(blob);
+        setVideoUrl(url);
+      };
+      
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+      // Fallback UI indication if needed
+      setIsRecording(false);
+    }
   };
 
   const stopRecording = () => {
@@ -532,6 +735,10 @@ export default function App() {
       />
 
       <AnimatePresence>
+        {showRatingPrompt && <RatingPrompt onClose={() => setShowRatingPrompt(false)} onRate={handleRateApp} />}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {!isInitialized && (
           <motion.div 
             initial={{ opacity: 0 }} 
@@ -553,18 +760,18 @@ export default function App() {
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.3, duration: 0.8 }}
-                className="text-3xl sm:text-5xl tracking-[0.2em] text-white font-extralight mb-4 uppercase text-center"
+                className="text-2xl sm:text-4xl tracking-[0.15em] text-white font-extralight mb-4 uppercase text-center max-w-lg leading-relaxed"
               >
-                Seeing Birdsong
+                Wanna see how birdsong looks like?
               </motion.h1>
               
               <motion.p 
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.4, duration: 0.8 }}
-                className="text-[9px] sm:text-[10px] text-white/40 tracking-[0.3em] sm:tracking-[0.5em] mb-12 max-w-xs sm:max-w-sm uppercase font-medium text-center"
+                className="text-[10px] sm:text-[11px] text-white/40 tracking-[0.3em] mb-12 max-w-xs sm:max-w-sm uppercase font-medium text-center italic"
               >
-                Acoustic Manifold Extraction & Mapping
+                Made with love by Pickko
               </motion.p>
               
               <motion.button 
@@ -575,10 +782,20 @@ export default function App() {
                 whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.08)" }}
                 whileTap={{ scale: 0.98 }}
                 onClick={initializeAudio}
-                className="px-8 sm:px-10 py-3 sm:py-4 glass-pill text-white/70 uppercase tracking-[0.2em] text-[10px] font-semibold transition-all cursor-pointer hover:text-white"
+                className="px-8 sm:px-12 py-3 sm:py-5 glass-pill text-white/80 uppercase tracking-[0.25em] text-[10px] font-semibold transition-all cursor-pointer hover:text-white border border-white/10"
               >
-                Initialize Interface
+                Step into the Resonance
               </motion.button>
+              
+              {audioError && (
+                 <motion.div 
+                   initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                   className="mt-6 flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl"
+                 >
+                    <Info size={14} className="text-red-400" />
+                    <span className="text-[10px] text-red-200/90 font-mono">{audioError}</span>
+                 </motion.div>
+              )}
             </div>
           </motion.div>
         )}
@@ -597,12 +814,12 @@ export default function App() {
               <div className="flex flex-col gap-3 sm:gap-4">
                 <div className="glass-pill px-4 sm:px-5 py-1.5 sm:py-2 flex items-center gap-2.5 w-fit">
                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                   <span className="text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold text-white/80">System Live</span>
+                   <span className="text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold text-white/80">The Song is Breathing</span>
                 </div>
                 
                 <div className="glass px-4 sm:px-5 py-2.5 sm:py-3 rounded-2xl flex flex-col gap-1 w-32 sm:w-48">
                    <div className="flex justify-between items-center text-[8px] sm:text-[9px] uppercase tracking-widest text-white/40 font-bold mb-1">
-                      <span className="hidden sm:inline">Spectral Density</span>
+                      <span className="hidden sm:inline">Harmonic Presence</span>
                       <span className="sm:hidden">Density</span>
                       <span ref={ampDisplayRef} className="text-white/70 text-[10px] sm:text-xs">0.0000</span>
                    </div>
@@ -663,112 +880,195 @@ export default function App() {
                     initial={{ opacity: 0, y: -20, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                    className="absolute top-16 sm:top-20 right-0 w-full sm:w-96 glass-card p-6 z-50 pointer-events-auto h-[70vh] overflow-y-auto"
+                    className="absolute top-16 sm:top-20 right-0 w-full sm:w-96 glass-card p-4 sm:p-6 z-50 pointer-events-auto h-[80vh] flex flex-col"
                   >
-                    <div className="flex flex-col gap-5 sm:gap-6">
-                      <div className="flex flex-col gap-3">
-                        <label className="text-[9px] sm:text-[10px] uppercase tracking-widest text-white/40 font-bold">Acoustic Palette</label>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                          {Object.keys(PALETTES).map(p => (
-                            <button
-                              key={p}
-                              onClick={() => setPalette(p)}
-                              className={`px-3 py-2 text-[10px] text-center rounded-lg transition-all ${palette === p ? 'bg-white/10 text-white border border-white/20' : 'text-white/40 hover:bg-white/5 border border-transparent'}`}
+                    <div className="flex gap-2 mb-6 border-b border-white/5 pb-2">
+                       <button 
+                         onClick={() => setActiveTab('essence')}
+                         className={`flex-1 py-2 text-[9px] uppercase tracking-widest font-bold transition-all ${activeTab === 'essence' ? 'text-white border-b border-white' : 'text-white/30 hover:text-white/50'}`}
+                       >
+                         Essence
+                       </button>
+                       <button 
+                         onClick={() => setActiveTab('resonance')}
+                         className={`flex-1 py-2 text-[9px] uppercase tracking-widest font-bold transition-all ${activeTab === 'resonance' ? 'text-white border-b border-white' : 'text-white/30 hover:text-white/50'}`}
+                       >
+                         Resonance
+                       </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
+                      {activeTab === 'essence' ? (
+                        <div className="flex flex-col gap-5 sm:gap-6">
+                          <div className="flex flex-col gap-3">
+                            <label className="text-[9px] sm:text-[10px] uppercase tracking-widest text-white/40 font-bold">Ethereal Palette</label>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {Object.keys(PALETTES).map(p => (
+                                <button
+                                  key={p}
+                                  onClick={() => setPalette(p)}
+                                  className={`px-3 py-2 text-[10px] text-center rounded-lg transition-all ${palette === p ? 'bg-white/10 text-white border border-white/20' : 'text-white/40 hover:bg-white/5 border border-transparent'}`}
+                                >
+                                  {p}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+                            <div className="flex flex-col gap-2">
+                              <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                                <span>Gentleness</span>
+                                <span className="text-white/80">{smoothing.toFixed(2)}</span>
+                              </div>
+                              <input 
+                                type="range" min="0" max="0.95" step="0.01" 
+                                value={smoothing} onChange={(e) => setSmoothing(parseFloat(e.target.value))}
+                                className="w-full"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                              <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                                <span>Glow</span>
+                                <span className="text-white/80">{bloomStrength.toFixed(1)}</span>
+                              </div>
+                              <input 
+                                type="range" min="0" max="3" step="0.1" 
+                                value={bloomStrength} onChange={(e) => setBloomStrength(parseFloat(e.target.value))}
+                                className="w-full"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                              <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                                <span>Circle of Life</span>
+                                <span className="text-white/80">{orbitSpeed.toFixed(1)}</span>
+                              </div>
+                              <input 
+                                type="range" min="0" max="5" step="0.1" 
+                                value={orbitSpeed} onChange={(e) => setOrbitSpeed(parseFloat(e.target.value))}
+                                className="w-full"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                              <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                                <span>Connections</span>
+                                <span className="text-white/80">{connectionDist.toFixed(1)}</span>
+                              </div>
+                              <input 
+                                type="range" min="1" max="10" step="0.1" 
+                                value={connectionDist} onChange={(e) => setConnectionDist(parseFloat(e.target.value))}
+                                className="w-full"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                              <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                                <span>Presence</span>
+                                <span className="text-white/80">{nodeDensity}</span>
+                              </div>
+                              <input 
+                                type="range" min="10" max="250" step="5" 
+                                value={nodeDensity} onChange={(e) => setNodeDensity(parseInt(e.target.value))}
+                                className="w-full"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-2">
+                              <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                                <span>Infinite Scale</span>
+                                <span className="text-white/80">{manifoldScale.toFixed(2)}</span>
+                              </div>
+                              <input 
+                                type="range" min="0.5" max="2.5" step="0.05" 
+                                value={manifoldScale} onChange={(e) => setManifoldScale(parseFloat(e.target.value))}
+                                className="w-full"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-2 pt-2 border-t border-white/5">
+                            <label className="text-[9px] uppercase tracking-widest text-white/40 font-bold">Spiritual Depth</label>
+                            <div className="flex gap-2">
+                              {[1024, 2048, 4096].map(size => (
+                                <button
+                                  key={size}
+                                  onClick={() => setFftSize(size)}
+                                  className={`flex-1 py-2 text-[10px] rounded-lg transition-all ${fftSize === size ? 'bg-white/20 text-white font-bold border border-white/30' : 'text-white/30 bg-white/5 border border-transparent'}`}
+                                >
+                                  {size}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col h-full">
+                          <p className="text-[10px] text-white/40 mb-8 italic text-center px-4 leading-relaxed tracking-wide">
+                            "Isolate the song from the silence. Tune the resonance to find where Pickko used to sing."
+                          </p>
+                          
+                          <div className="flex justify-between items-end h-64 sm:h-72 gap-1 sm:gap-2 px-1 mb-6">
+                            {Object.entries(eqBands).map(([freq, gain]) => (
+                               <div key={freq} className="flex-1 flex flex-col items-center gap-3 h-full">
+                                  <div className="relative w-full flex-1 flex justify-center bg-white/5 rounded-full group">
+                                     <input 
+                                       type="range" min="-24" max="24" step="1"
+                                       value={gain as number}
+                                       style={{ WebkitAppearance: 'slider-vertical' } as any}
+                                       onChange={(e) => updateEqBand(Number(freq), parseFloat(e.target.value))}
+                                       className="vertical-slider w-1.5 h-full appearance-none bg-transparent cursor-pointer"
+                                     />
+                                     <div 
+                                       className="absolute bottom-0 left-0 right-0 bg-white/10 rounded-full transition-all duration-200 pointer-events-none"
+                                       style={{ height: `${(((gain as number) + 24) / 48) * 100}%` }}
+                                     />
+                                  </div>
+                                  <div className="flex flex-col items-center gap-0.5">
+                                    <span className="text-[8px] text-white/60 font-mono tracking-tighter">
+                                      {parseInt(freq) >= 1000 ? `${parseInt(freq)/1000}k` : freq}
+                                    </span>
+                                    <span className={`text-[7px] font-bold ${gain === 0 ? 'text-white/20' : (gain as number) > 0 ? 'text-green-400/60' : 'text-red-400/60'}`}>
+                                      {(gain as number) > 0 ? `+${gain}` : gain}
+                                    </span>
+                                  </div>
+                               </div>
+                            ))}
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4 mt-auto mb-2">
+                            <button 
+                              onClick={() => {
+                                const birdPresets = { 60: -24, 170: -24, 310: -24, 600: -24, 1000: -12, 3000: 24, 6000: 24, 12000: -15, 14000: -24, 16000: -24 };
+                                Object.entries(birdPresets).forEach(([f, g]) => updateEqBand(Number(f), g));
+                              }}
+                              className="py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[9px] uppercase tracking-widest text-white/60 hover:text-white transition-all font-bold"
                             >
-                              {p}
+                              Strict Song Pureness
                             </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-x-6 gap-y-5">
-                        <div className="flex flex-col gap-2">
-                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
-                            <span>Smoothing</span>
-                            <span className="text-white/80">{smoothing.toFixed(2)}</span>
-                          </div>
-                          <input 
-                            type="range" min="0" max="0.95" step="0.01" 
-                            value={smoothing} onChange={(e) => setSmoothing(parseFloat(e.target.value))}
-                            className="w-full"
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
-                            <span>Bloom</span>
-                            <span className="text-white/80">{bloomStrength.toFixed(1)}</span>
-                          </div>
-                          <input 
-                            type="range" min="0" max="3" step="0.1" 
-                            value={bloomStrength} onChange={(e) => setBloomStrength(parseFloat(e.target.value))}
-                            className="w-full"
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
-                            <span>Orbit</span>
-                            <span className="text-white/80">{orbitSpeed.toFixed(1)}</span>
-                          </div>
-                          <input 
-                            type="range" min="0" max="5" step="0.1" 
-                            value={orbitSpeed} onChange={(e) => setOrbitSpeed(parseFloat(e.target.value))}
-                            className="w-full"
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
-                            <span>Links</span>
-                            <span className="text-white/80">{connectionDist.toFixed(1)}</span>
-                          </div>
-                          <input 
-                            type="range" min="1" max="10" step="0.1" 
-                            value={connectionDist} onChange={(e) => setConnectionDist(parseFloat(e.target.value))}
-                            className="w-full"
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
-                            <span>Density</span>
-                            <span className="text-white/80">{nodeDensity}</span>
-                          </div>
-                          <input 
-                            type="range" min="10" max="250" step="5" 
-                            value={nodeDensity} onChange={(e) => setNodeDensity(parseInt(e.target.value))}
-                            className="w-full"
-                          />
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
-                            <span>Scale</span>
-                            <span className="text-white/80">{manifoldScale.toFixed(2)}</span>
-                          </div>
-                          <input 
-                            type="range" min="0.5" max="2.5" step="0.05" 
-                            value={manifoldScale} onChange={(e) => setManifoldScale(parseFloat(e.target.value))}
-                            className="w-full"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-2 pt-2 border-t border-white/5">
-                        <label className="text-[9px] uppercase tracking-widest text-white/40 font-bold">FFT Resolution</label>
-                        <div className="flex gap-2">
-                          {[1024, 2048, 4096].map(size => (
-                            <button
-                              key={size}
-                              onClick={() => setFftSize(size)}
-                              className={`flex-1 py-2 text-[10px] rounded-lg transition-all ${fftSize === size ? 'bg-white/20 text-white font-bold border border-white/30' : 'text-white/30 bg-white/5 border border-transparent'}`}
+                            <button 
+                              onClick={() => {
+                                Object.keys(eqBands).forEach(f => updateEqBand(Number(f), 0));
+                              }}
+                              className="py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[9px] uppercase tracking-widest text-white/60 hover:text-white transition-all font-bold"
                             >
-                              {size}
+                              Flat Space
                             </button>
-                          ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col gap-2 pt-4 border-t border-white/5">
+                      <button
+                        onClick={resetToDefaults}
+                        className="w-full py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white text-[10px] uppercase tracking-[0.2em] font-bold transition-all flex items-center justify-center gap-2"
+                      >
+                        <RotateCcw size={14} />
+                        Return to Essence
+                      </button>
                     </div>
                   </motion.div>
                 )}
@@ -777,30 +1077,14 @@ export default function App() {
 
             {/* Bottom Section */}
             <div className="flex flex-col sm:flex-row justify-between items-center sm:items-end w-full gap-8 sm:gap-0">
-              {/* Observation Feed Card - Hidden on very small mobile */}
-              <div className="hidden sm:flex glass-card w-48 h-64 p-1 group relative overflow-hidden">
-                 <img 
-                   src="https://images.unsplash.com/photo-1552728089-57168bb3fc74?auto=format&fit=crop&w=400&q=80" 
-                   className="w-full h-full object-cover filter brightness-90 contrast-110" 
-                   alt="Observation Stream" 
-                   referrerPolicy="no-referrer"
-                 />
-                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-                 <div className="absolute top-4 left-4 flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                    <span className="text-[9px] font-bold text-white tracking-[0.2em] uppercase drop-shadow-md">LIVE Feed</span>
-                 </div>
-                 <div className="absolute bottom-4 left-4 right-4 text-left">
-                    <div className="text-[8px] text-white/60 tracking-widest uppercase font-bold mb-0.5">Cam / S-04</div>
-                    <div className="text-[10px] text-white font-medium tracking-wide">Eurasian Woodlands</div>
-                 </div>
-              </div>
+              {/* Left spacer to keep center block aligned on desktop */}
+              <div className="hidden sm:block w-48" />
 
               {/* Central Identity */}
               <div className="flex flex-col items-center mb-0 sm:mb-4 px-4 order-first sm:order-none">
-                <div className="text-[8px] sm:text-[10px] font-bold uppercase tracking-[0.3em] sm:tracking-[0.5em] text-white/20 mb-2">Acoustical Subject</div>
+                <div className="text-[8px] sm:text-[10px] font-bold uppercase tracking-[0.3em] sm:tracking-[0.5em] text-white/20 mb-2">Soul Reflected</div>
                 <h2 className="text-xl sm:text-3xl font-serif italic text-white/95 text-center leading-tight">
-                   Sylvia atricapilla
+                   Echoes of the Sky
                 </h2>
                 <div className="flex sm:hidden mt-4 font-mono text-[9px] uppercase tracking-widest text-white/30 gap-4">
                   <span>T+<span ref={timeDisplayRef}>0.00</span></span>
@@ -811,18 +1095,53 @@ export default function App() {
               {/* Right Side Spectrum Capsule - Optimized for mobile */}
               <div className="flex flex-row sm:flex-col items-center gap-6 mb-2 sm:mb-4 w-full sm:w-auto px-4 sm:px-0">
                 <div className="hidden sm:flex glass-pill w-12 py-6 flex flex-col items-center justify-between h-64">
-                   <div ref={highPassRef} className="text-[9px] font-mono text-white/40 origin-center -rotate-90 whitespace-nowrap mb-2 transition-colors duration-200">High Pass</div>
-                   <div className="flex-1 w-px bg-white/10 relative my-4">
-                      <div className="absolute top-0 w-1 h-1 -left-[1.5px] rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
-                      <div className="absolute bottom-0 w-1 h-1 -left-[1.5px] rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                   <div className="text-[9px] font-mono text-white/40 origin-center -rotate-90 whitespace-nowrap mb-2 transition-colors duration-200">High Pass</div>
+                   <div className="flex-1 w-full max-h-[120px] flex flex-row items-center justify-center gap-1 my-4 relative">
+                      <div className="absolute inset-0 flex justify-center pointer-events-none">
+                         <div className="w-px h-full bg-white/10" />
+                      </div>
+                      <input 
+                        title="High Pass Frequency"
+                        type="range" min="20" max="20000" step="10"
+                        value={highPassFreq}
+                        onChange={(e) => updateHighPass(Number(e.target.value))}
+                        className="vertical-slider w-1 h-full appearance-none bg-transparent cursor-pointer relative z-10"
+                        style={{ WebkitAppearance: 'slider-vertical' } as any}
+                      />
+                      <input 
+                        title="Low Pass Frequency"
+                        type="range" min="20" max="20000" step="10"
+                        value={lowPassFreq}
+                        onChange={(e) => updateLowPass(Number(e.target.value))}
+                        className="vertical-slider w-1 h-full appearance-none bg-transparent cursor-pointer relative z-10"
+                        style={{ WebkitAppearance: 'slider-vertical' } as any}
+                      />
                    </div>
-                   <div ref={lowPassRef} className="text-[9px] font-mono text-white/40 origin-center -rotate-90 whitespace-nowrap mt-2 transition-colors duration-200">Low Pass</div>
+                   <div className="text-[9px] font-mono text-white/40 origin-center -rotate-90 whitespace-nowrap mt-2 transition-colors duration-200">Low Pass</div>
                 </div>
-                <div className="sm:hidden flex-1 h-px bg-white/10 relative">
-                   <div className="absolute left-0 w-1 h-1 -top-[1.5px] rounded-full bg-blue-500" />
-                   <div className="absolute right-0 w-1 h-1 -top-[1.5px] rounded-full bg-red-500" />
+                <div className="sm:hidden flex-1 w-full flex flex-col gap-2 relative z-10 px-4">
+                   <div className="flex items-center gap-2">
+                       <span className="text-[9px] font-mono text-white/40 min-w-[50px]">High Pass</span>
+                       <input 
+                         title="High Pass Frequency"
+                         type="range" min="20" max="20000" step="10"
+                         value={highPassFreq}
+                         onChange={(e) => updateHighPass(Number(e.target.value))}
+                         className="w-full appearance-none h-0.5 bg-white/10 outline-none block opacity-70 hover:opacity-100"
+                       />
+                   </div>
+                   <div className="flex items-center gap-2">
+                       <span className="text-[9px] font-mono text-white/40 min-w-[50px]">Low Pass</span>
+                       <input 
+                         title="Low Pass Frequency"
+                         type="range" min="20" max="20000" step="10"
+                         value={lowPassFreq}
+                         onChange={(e) => updateLowPass(Number(e.target.value))}
+                         className="w-full appearance-none h-0.5 bg-white/10 outline-none block opacity-70 hover:opacity-100"
+                       />
+                   </div>
                 </div>
-                <div className="text-[9px] font-mono text-white/40 tracking-widest uppercase">Band / 2-8k</div>
+                <div className="text-[9px] font-mono text-white/40 tracking-widest uppercase">The Frequency of Life</div>
               </div>
             </div>
           </motion.div>
