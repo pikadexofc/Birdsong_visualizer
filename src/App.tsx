@@ -651,6 +651,19 @@ export default function App() {
     }
   };
 
+  const handleSupportLink = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const url = "https://www.supportkori.com/mdzobaedislamshanto";
+    if (Capacitor.isNativePlatform()) {
+      await Browser.open({ url });
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
   const setupAudioPipeline = async (stream: MediaStream) => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -893,6 +906,16 @@ export default function App() {
               >
                 Experience the geometry of birdsong
               </motion.h1>
+              
+              <motion.button 
+                onClick={handleSupportLink}
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.4, duration: 0.8 }}
+                className="text-[9px] text-white/20 tracking-[0.4em] mb-12 uppercase font-medium text-center hover:text-white/50 transition-colors cursor-pointer pointer-events-auto"
+              >
+                Made with love by Pickko
+              </motion.button>
               
               <motion.button 
                 id="init-audio-btn"
