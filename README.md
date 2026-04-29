@@ -1,50 +1,55 @@
-<div align="center">
-<img width="1200" height="475" alt="Birdsong Visualizer Banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+# Birdsong Visualizer
+### High-Fidelity Spectral Audio Analysis for Mobile Devices
 
-# 🦜 Birdsong Visualizer 
-### *The Shape of Song. The Weight of Silence.*
+Birdsong Visualizer is a professional-grade cross-platform application designed for real-time visualization and isolation of avian vocalizations. Built with React, Three.js, and Capacitor, it provides a high-performance native audio pipeline optimized for both Android and iOS.
 
-**"Isolate the song from the silence. Tune the resonance to find where Pickko used to sing."**
+## Key Features
+
+- **Advanced Audio DSP**: Implements a dedicated dynamics compressor and biquad filtering for surgical audio isolation.
+- **Spectral Noise Gate**: User-adjustable noise suppression to filter out environmental ambient hum and focus on high-frequency signals.
+- **Native Performance**: Fully optimized for mobile with OpenGL-accelerated rendering and native audio hardware integration.
+- **Offline Architecture**: Privacy-first, local-only processing with zero external data dependency.
+
+## Technical Architecture
+
+### Audio Pipeline
+The application utilizes the Web Audio API bridged through Capacitor for native microphone access. The signal flow is as follows:
+`Microphone -> Dynamics Compressor -> Biquad Filters -> 4096-sample FFT Analyser -> Render Engine`
+
+### Rendering
+The visualization is powered by an orbital particle system managed via Three.js, ensuring high-frame-rate feedback even on mid-range mobile hardware.
+
+## Getting Started
+
+### Prerequisites
+- Node.js (v18+)
+- Android Studio / Xcode (for native builds)
+
+### Installation
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/pikadexofc/Birdsong_visualizer.git
+   ```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Run in development mode:
+   ```bash
+   npm run dev
+   ```
+
+### Mobile Deployment
+Sync with native platforms:
+```bash
+npx cap sync
+```
 
 ---
 
-[![v1.0.0](https://img.shields.io/badge/Version-1.0.0--Release-white?style=for-the-badge&labelColor=black)](https://github.com/pikadexofc/Birdsong_visualizer/releases/tag/v1.0.0-release)
-[![Made with Love](https://img.shields.io/badge/Made_with_love-by_Pickko-FF69B4?style=for-the-badge&labelColor=black)](https://www.supportkori.com/mdzobaedislamshanto)
-
-</div>
-
-## 🌌 The Philosophy
-Why just listen when you can see the geometry of a heartbeat? Birdsong Visualizer was born from a simple, slightly mad question: *What does the color of a morning in the forest actually look like?* 
-
-We believe that every chirp is a mathematical ripple in the fabric of the sky. This app is your spectral lens—a way to catch the ghosts of melodies that usually vanish into the wind. It’s not just an "audio visualizer"; it’s a reflection of the soul, captured in HSL-interpolated particles and dynamics-compressed resonance.
-
-## 📜 The Legend of Pickko
-Legend has it that Pickko (the original avian architect of this project) once sang a note so high it turned into a Three.js sprite. We’ve been trying to replicate that resonance ever since. Every time you open the "Spectral Silence" slider, you're not just cutting background hum—you're filtering through the noise of the universe to find that one perfect echo.
-
-## 🛠️ The Tech (For the Nerds)
-While the birds are doing the singing, some very serious (and very goofy) code is running under the hood:
-- **Native Audio DSP**: A hardware-gated pipeline that treats every 4kHz chirp like a VIP at a night club.
-- **Dynamics Compressor**: Because birds don't have volume knobs.
-- **Resonance EQ**: High-pass and Low-pass filters that make wind noise feel like a distant memory of a bad vacation.
-- **Three.js Manifold**: An orbital particle system that is literally just a bunch of circles and lines trying their best to look like a soul.
-
-## 🍄 Goofiness & Warnings
-- **Warning**: Using this app near actual pigeons may result in unintended territorial disputes. 
-- **Fact**: 99.2% of the particles are sentient. They don't have health insurance. Be kind.
-- **Pro-tip**: If you turn the "Manifold Scale" all the way up, you might accidentally see the fourth dimension. We are not liable for any sudden enlightenments or existential dread.
+## Production Builds
+Stable release artifacts, including the Android App Bundle (.aab) and standalone APKs, are available in the [Releases](https://github.com/pikadexofc/Birdsong_visualizer/releases) section.
 
 ---
 
-### 🚀 Join the Resonance
-1. **Clone the Soul**: `git clone https://github.com/pikadexofc/Birdsong_visualizer.git`
-2. **Feed the Birds**: `npm install`
-3. **Step into the Sky**: `npm run dev`
-
----
-
-<div align="center">
-  <p><i>"The song is breathing. Are you?"</i></p>
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&pause=1000&color=FFFFFF70&center=true&vCenter=true&width=435&lines=Made+with+love+by+Pickko;Finding+the+frequency+of+life;Watching+the+sky+vibrate" alt="Typing SVG" />
-  <br/>
-  <b>[ Support the Echoes ](https://www.supportkori.com/mdzobaedislamshanto)</b>
-</div>
+*Birdsong Visualizer - Precision Audio Visualization.*
