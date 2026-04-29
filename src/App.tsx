@@ -11,6 +11,13 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { motion, AnimatePresence, animate } from 'motion/react';
 import { Activity, Settings, X, Video, Download, RotateCcw, Star, Info } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { App as AppPlugin } from '@capacitor/app';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { SplashScreen } from '@capacitor/splash-screen';
+import { Browser } from '@capacitor/browser';
 
 interface DataNode {
   obj: THREE.Sprite;
@@ -33,10 +40,11 @@ const DEFAULTS = {
   nodeDensity: 10,
   bloomStrength: 0.2,
   orbitSpeed: 0.4,
-  connectionDist: 6.9,
+  connectionDist: 8.0,
   manifoldScale: 1.0,
-  highPassFreq: 20,
+  highPassFreq: 100,
   lowPassFreq: 20000,
+  noiseGate: 5,
   eqBands: {
     60: 0,
     170: 0,
@@ -56,7 +64,7 @@ const loadConfig = () => {
     const saved = localStorage.getItem('pickko-config');
     if (saved) return JSON.parse(saved);
   } catch (e) {
-    console.error('Failed to load local config', e);
+    // Production silent
   }
   return DEFAULTS;
 };
@@ -75,9 +83,9 @@ const RatingPrompt = ({ onClose, onRate }: { onClose: () => void, onRate: () => 
                <X size={18} />
              </button>
              <Star className="w-12 h-12 text-yellow-400/90 mb-6 drop-shadow-[0_0_15px_rgba(250,204,21,0.4)]" />
-             <h3 className="text-white uppercase tracking-[0.15em] text-sm font-bold mb-3">Harmonization Complete</h3>
+             <h3 className="text-white uppercase tracking-[0.15em] text-sm font-bold mb-3">Resonance Found</h3>
              <p className="text-white/50 text-[10px] tracking-widest uppercase leading-relaxed mb-8 max-w-[250px]">
-               If this experience resonates with your frequency, please consider reviewing us.
+               If Birdsong Visualizer resonates with your frequency, please consider reviewing us.
              </p>
              <button onClick={onRate} className="w-full glass-pill py-3 text-white uppercase tracking-widest text-[10px] font-bold hover:bg-white/20 transition-all mb-4 cursor-pointer shadow-[0_0_20px_rgba(255,255,255,0.05)]">
                Rate on Play Store
@@ -116,6 +124,7 @@ export default function App() {
   const [manifoldScale, setManifoldScale] = useState<number>(configInit.manifoldScale ?? DEFAULTS.manifoldScale);
   const [highPassFreq, setHighPassFreq] = useState<number>(configInit.highPassFreq ?? DEFAULTS.highPassFreq);
   const [lowPassFreq, setLowPassFreq] = useState<number>(configInit.lowPassFreq ?? DEFAULTS.lowPassFreq);
+  const [noiseGate, setNoiseGate] = useState<number>(configInit.noiseGate ?? DEFAULTS.noiseGate);
   const [eqBands, setEqBands] = useState<Record<string, number>>(configInit.eqBands ?? DEFAULTS.eqBands);
   const [activeTab, setActiveTab] = useState<'essence' | 'resonance'>('essence');
 
@@ -126,19 +135,48 @@ export default function App() {
 
   useEffect(() => {
     try {
-      const state = { fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, highPassFreq, lowPassFreq, eqBands };
+      const state = { fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, highPassFreq, lowPassFreq, noiseGate, eqBands };
       localStorage.setItem('pickko-config', JSON.stringify(state));
     } catch (e) {
-      console.warn('Failed to save to local storage', e);
+      // Production silent
     }
-  }, [fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, highPassFreq, lowPassFreq, eqBands]);
+  }, [fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, highPassFreq, lowPassFreq, noiseGate, eqBands]);
+
+  // Native Platform Lifecycle
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      // Configure Status Bar
+      StatusBar.setStyle({ style: Style.Dark });
+      
+      // Handle Android Back Button
+      const backListener = AppPlugin.addListener('backButton', ({ canGoBack }) => {
+        if (!canGoBack) {
+          if (showControls) {
+            setShowControls(false);
+          } else {
+            AppPlugin.exitApp();
+          }
+        }
+      });
+
+      return () => {
+        backListener.remove();
+      };
+    }
+  }, [showControls]);
+
+  useEffect(() => {
+    if (isInitialized && Capacitor.isNativePlatform()) {
+       SplashScreen.hide();
+    }
+  }, [isInitialized]);
 
   const handleRateApp = () => {
     localStorage.setItem('pickko-has-rated', 'true');
     setShowRatingPrompt(false);
     // In a production PWA or TWA snippet, this routes to the real Play Store URI
     if (typeof window !== 'undefined') {
-       window.open('https://play.google.com/store/apps/details?id=com.pickko.app', '_blank');
+       window.open('https://play.google.com/store/apps/details?id=com.birdsong.visualizer', '_blank');
     }
   };
 
@@ -154,6 +192,7 @@ export default function App() {
     setManifoldScale(DEFAULTS.manifoldScale);
     setHighPassFreq(DEFAULTS.highPassFreq);
     setLowPassFreq(DEFAULTS.lowPassFreq);
+    setNoiseGate(DEFAULTS.noiseGate);
     setEqBands(DEFAULTS.eqBands);
     
     // Reset filters if they exist
@@ -225,11 +264,12 @@ export default function App() {
     bloomStrength,
     orbitSpeed,
     connectionDist,
-    manifoldScale
+    manifoldScale,
+    noiseGate
   });
 
   useEffect(() => {
-    configRef.current = { fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale };
+    configRef.current = { fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, noiseGate };
     
     // Immediate feedback on UI change
     if (mainGroupRef.current) {
@@ -248,7 +288,7 @@ export default function App() {
     if (controlsRef.current) {
       controlsRef.current.autoRotateSpeed = orbitSpeed;
     }
-  }, [fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale]);
+  }, [fftSize, smoothing, palette, nodeLife, nodeDensity, bloomStrength, orbitSpeed, connectionDist, manifoldScale, noiseGate]);
 
   const initScene = () => {
     if (!containerRef.current || !canvasRef.current) return;
@@ -480,9 +520,16 @@ export default function App() {
       const runTime = (timeNow - startTimeRef.current) / 1000.0;
 
       analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+      
+      // Apply Noise Gate
+      for (let i = 0; i < dataArrayRef.current.length; i++) {
+        if (dataArrayRef.current[i] < configRef.current.noiseGate) {
+          dataArrayRef.current[i] = 0;
+        }
+      }
 
-      const minBin = 93;  
-      const maxBin = 371; 
+      const minBin = 10;  
+      const maxBin = 700; 
       let maxAmp = 0;
       let targetBin = 0;
 
@@ -583,8 +630,42 @@ export default function App() {
 
   const initializeAudio = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setAudioError(null);
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       audioStreamRef.current = stream;
+      setupAudioPipeline(stream);
+      happyPathCountRef.current += 1;
+    } catch (err: any) {
+      const isNative = Capacitor.isNativePlatform();
+      setAudioError(isNative 
+        ? "Microphone access was denied. Please allow it in App Settings (Permissions > Microphone)." 
+        : "Microphone access was denied. Please allow it in site settings.");
+      setIsInitialized(false);
+    }
+  };
+
+  const handleSupportLink = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const url = "https://www.supportkori.com/mdzobaedislamshanto";
+    if (Capacitor.isNativePlatform()) {
+      await Browser.open({ url });
+    } else {
+      window.open(url, '_blank');
+    }
+  };
+
+  const setupAudioPipeline = async (stream: MediaStream) => {
+    try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = audioCtx.createMediaStreamSource(stream);
       const analyser = audioCtx.createAnalyser();
@@ -592,7 +673,6 @@ export default function App() {
       analyser.fftSize = fftSize; 
       analyser.smoothingTimeConstant = smoothing; 
       
-      // Create High Pass / Low Pass
       const highPassNode = audioCtx.createBiquadFilter();
       highPassNode.type = 'highpass';
       highPassNode.frequency.value = highPassFreq;
@@ -605,7 +685,14 @@ export default function App() {
       lowPassNode.Q.value = 0.707;
       lowPassNodeRef.current = lowPassNode;
 
-      // Create Equalizer Chain
+      // Dynamics Compressor to boost quiet birds and tame loud ones
+      const compressor = audioCtx.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-50, audioCtx.currentTime);
+      compressor.knee.setValueAtTime(40, audioCtx.currentTime);
+      compressor.ratio.setValueAtTime(12, audioCtx.currentTime);
+      compressor.attack.setValueAtTime(0, audioCtx.currentTime);
+      compressor.release.setValueAtTime(0.25, audioCtx.currentTime);
+
       const freqs = Object.keys(eqBands).map(Number);
       const filters = freqs.map((freq, i) => {
         const filter = audioCtx.createBiquadFilter();
@@ -618,8 +705,9 @@ export default function App() {
 
       filterNodesRef.current = filters;
 
-      // Connect source -> highPass -> lowPass -> EQ -> analyser
-      source.connect(highPassNode);
+      // Connect source -> compressor (pre-amp) -> highPass -> lowPass -> EQ -> analyser
+      source.connect(compressor);
+      compressor.connect(highPassNode);
       highPassNode.connect(lowPassNode);
       
       let lastNode: AudioNode = lowPassNode;
@@ -629,6 +717,10 @@ export default function App() {
       });
       lastNode.connect(analyser);
       
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+
       analyserRef.current = analyser;
       dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
       audioCtxRef.current = audioCtx;
@@ -638,14 +730,8 @@ export default function App() {
       setIsInitialized(true);
       initScene();
     } catch (err: any) {
-      console.error("Audio Initialization Failed:", err);
-      if (err.name === 'NotAllowedError') {
-        setAudioError('Microphone access was denied. Please allow it in site settings.');
-      } else if (err.name === 'NotFoundError') {
-        setAudioError('No microphone detected on this device.');
-      } else {
-        setAudioError('An unexpected error occurred capturing audio.');
-      }
+      // Production silent
+      setAudioError('Audio processing failed to initialize.');
     }
   };
 
@@ -720,6 +806,48 @@ export default function App() {
     }
   };
 
+  const handleDownload = async () => {
+    if (!videoUrl) return;
+    
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const response = await fetch(videoUrl);
+        const blob = await response.blob();
+        
+        // Convert blob to base64 for native writing
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = async () => {
+          const base64data = (reader.result as string).split(',')[1];
+          
+          try {
+            const fileName = `birdsong-${Date.now()}.webm`;
+            const result = await Filesystem.writeFile({
+              path: fileName,
+              data: base64data,
+              directory: Directory.Cache
+            });
+            
+            await Share.share({
+              title: 'Birdsong Visualization',
+              text: 'Check out this visualization from Birdsong Visualizer!',
+              url: result.uri,
+            });
+          } catch (writeErr) {
+            // Production silent
+          }
+        };
+      } catch (err) {
+        // Production silent
+      }
+    } else {
+      const link = document.createElement('a');
+      link.href = videoUrl;
+      link.download = 'birdsong-visualizer.webm';
+      link.click();
+    }
+  };
+
   return (
     <div ref={containerRef} className="relative w-full h-screen bg-black overflow-hidden flex flex-col font-sans select-none">
       <canvas id="visualizer-canvas" ref={canvasRef} className="absolute inset-0 w-full h-full block" />
@@ -753,26 +881,41 @@ export default function App() {
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.2, duration: 0.8 }}
               >
-                <Activity className="w-16 h-16 text-white/40 mb-8 stroke-[1px]" />
+                <img src="/logo.png" className="w-24 h-24 sm:w-32 sm:h-32 mb-8 object-contain" alt="Logo" />
               </motion.div>
               
+              <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.1, duration: 0.8 }}
+                className="flex flex-col items-center mb-10"
+              >
+                <h2 className="text-4xl sm:text-6xl font-light tracking-[0.05em] text-white mb-2 uppercase text-center leading-tight">
+                  Birdsong<br/>
+                  <span className="font-extralight tracking-[0.2em] opacity-60 text-2xl sm:text-4xl">Visualizer</span>
+                </h2>
+                <div className="h-px w-12 bg-white/20 mt-4 mb-4" />
+                <div className="text-[10px] tracking-[0.3em] text-white/40 uppercase italic">The Shape of Song</div>
+              </motion.div>
+
               <motion.h1 
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.3, duration: 0.8 }}
-                className="text-2xl sm:text-4xl tracking-[0.15em] text-white font-extralight mb-4 uppercase text-center max-w-lg leading-relaxed"
+                className="text-lg sm:text-xl tracking-[0.1em] text-white/70 font-extralight mb-12 uppercase text-center max-w-lg leading-relaxed"
               >
                 Wanna see how birdsong looks like?
               </motion.h1>
               
-              <motion.p 
+              <motion.button 
+                onClick={handleSupportLink}
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ delay: 0.4, duration: 0.8 }}
-                className="text-[10px] sm:text-[11px] text-white/40 tracking-[0.3em] mb-12 max-w-xs sm:max-w-sm uppercase font-medium text-center italic"
+                className="text-[9px] text-white/20 tracking-[0.4em] mb-12 uppercase font-medium text-center hover:text-white/50 transition-colors cursor-pointer pointer-events-auto"
               >
                 Made with love by Pickko
-              </motion.p>
+              </motion.button>
               
               <motion.button 
                 id="init-audio-btn"
@@ -807,7 +950,7 @@ export default function App() {
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             transition={{ delay: 0.8, duration: 1.5, ease: "easeOut" }}
-            className="absolute inset-x-0 inset-y-0 pointer-events-none z-10 p-6 sm:p-10 flex flex-col justify-between"
+            className="absolute inset-x-0 inset-y-0 pointer-events-none z-10 p-6 sm:p-10 flex flex-col justify-between safe-padding-top safe-padding-bottom"
           >
             {/* Top Bar Indicators */}
             <div className="flex justify-between items-start w-full relative">
@@ -836,15 +979,14 @@ export default function App() {
               <div className="flex items-start gap-4 sm:gap-8 pointer-events-auto">
                 <div className="flex gap-2">
                   {videoUrl && !isRecording && (
-                    <motion.a
-                      href={videoUrl}
-                      download="birdsong-record.webm"
+                    <motion.button
+                      onClick={handleDownload}
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.9 }}
                       className="glass-pill p-2 sm:p-3 text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
                     >
                       <Download size={18} />
-                    </motion.a>
+                    </motion.button>
                   )}
                   <motion.button
                     whileHover={{ scale: 1.05, backgroundColor: "rgba(255,255,255,0.1)" }}
@@ -866,7 +1008,12 @@ export default function App() {
                 </motion.button>
 
                 <div className="hidden sm:flex flex-col gap-2 text-right">
-                  <div className="text-[10px] font-mono text-white/50 tracking-wider uppercase">Made with love by Pickko</div>
+                  <button 
+                    onClick={handleSupportLink}
+                    className="text-[10px] font-mono text-white/40 tracking-wider uppercase hover:text-white/70 transition-colors cursor-pointer pointer-events-auto text-right"
+                  >
+                    Made with love by Pickko
+                  </button>
                   <div className="text-2xl font-mono text-white/90 font-light tracking-tighter">
                      T+<span ref={timeDisplayRef}>0.00</span>
                   </div>
@@ -1010,32 +1157,44 @@ export default function App() {
                             "Isolate the song from the silence. Tune the resonance to find where Pickko used to sing."
                           </p>
                           
-                          <div className="flex justify-between items-end h-64 sm:h-72 gap-1 sm:gap-2 px-1 mb-6">
-                            {Object.entries(eqBands).map(([freq, gain]) => (
-                               <div key={freq} className="flex-1 flex flex-col items-center gap-3 h-full">
-                                  <div className="relative w-full flex-1 flex justify-center bg-white/5 rounded-full group">
-                                     <input 
-                                       type="range" min="-24" max="24" step="1"
-                                       value={gain as number}
-                                       style={{ WebkitAppearance: 'slider-vertical' } as any}
-                                       onChange={(e) => updateEqBand(Number(freq), parseFloat(e.target.value))}
-                                       className="vertical-slider w-1.5 h-full appearance-none bg-transparent cursor-pointer"
-                                     />
-                                     <div 
-                                       className="absolute bottom-0 left-0 right-0 bg-white/10 rounded-full transition-all duration-200 pointer-events-none"
-                                       style={{ height: `${(((gain as number) + 24) / 48) * 100}%` }}
-                                     />
-                                  </div>
-                                  <div className="flex flex-col items-center gap-0.5">
-                                    <span className="text-[8px] text-white/60 font-mono tracking-tighter">
-                                      {parseInt(freq) >= 1000 ? `${parseInt(freq)/1000}k` : freq}
-                                    </span>
-                                    <span className={`text-[7px] font-bold ${gain === 0 ? 'text-white/20' : (gain as number) > 0 ? 'text-green-400/60' : 'text-red-400/60'}`}>
-                                      {(gain as number) > 0 ? `+${gain}` : gain}
-                                    </span>
-                                  </div>
-                               </div>
-                            ))}
+                          <div className="flex-1 flex flex-col gap-6 px-1 mb-8 overflow-y-auto custom-scrollbar">
+                            <div className="flex flex-col gap-3 pt-2">
+                              <div className="flex justify-between items-center text-[9px] uppercase tracking-widest text-white/40 font-bold">
+                                <span>Spectral Silence (Noise Gate)</span>
+                                <span className="text-white/80">{noiseGate}</span>
+                              </div>
+                              <input 
+                                type="range" min="0" max="255" step="1" 
+                                value={noiseGate} onChange={(e) => setNoiseGate(parseInt(e.target.value))}
+                                className="w-full"
+                              />
+                              <p className="text-[8px] text-white/20 uppercase tracking-tighter text-center">Increase to ignore background hum</p>
+                            </div>
+                            
+                            <div className="flex justify-between items-end h-48 sm:h-56 gap-1 sm:gap-2 px-1">
+                              {Object.entries(eqBands).map(([freq, gain]) => (
+                                 <div key={freq} className="flex-1 flex flex-col items-center gap-3 h-full">
+                                    <div className="relative w-full flex-1 flex justify-center bg-white/5 rounded-full group">
+                                       <input 
+                                         type="range" min="-24" max="24" step="1"
+                                         value={gain as number}
+                                         style={{ WebkitAppearance: 'slider-vertical' } as any}
+                                         onChange={(e) => updateEqBand(Number(freq), parseFloat(e.target.value))}
+                                         className="vertical-slider w-1.5 h-full appearance-none bg-transparent cursor-pointer"
+                                       />
+                                       <div 
+                                         className="absolute bottom-0 left-0 right-0 bg-white/10 rounded-full transition-all duration-200 pointer-events-none"
+                                         style={{ height: `${(((gain as number) + 24) / 48) * 100}%` }}
+                                       />
+                                    </div>
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <span className="text-[8px] text-white/60 font-mono tracking-tighter">
+                                        {parseInt(freq) >= 1000 ? `${parseInt(freq)/1000}k` : freq}
+                                      </span>
+                                    </div>
+                                 </div>
+                              ))}
+                            </div>
                           </div>
                           
                           <div className="grid grid-cols-2 gap-4 mt-auto mb-2">
@@ -1088,7 +1247,6 @@ export default function App() {
                 </h2>
                 <div className="flex sm:hidden mt-4 font-mono text-[9px] uppercase tracking-widest text-white/30 gap-4">
                   <span>T+<span ref={timeDisplayRef}>0.00</span></span>
-                  <span>Made with love by Pickko</span>
                 </div>
               </div>
 
