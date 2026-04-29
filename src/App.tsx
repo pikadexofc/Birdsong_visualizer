@@ -131,6 +131,8 @@ export default function App() {
   // Feedback & Rating State
   const [showRatingPrompt, setShowRatingPrompt] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [showInstallBtn, setShowInstallBtn] = useState(false);
   const happyPathCountRef = useRef(0);
 
   useEffect(() => {
@@ -144,12 +146,29 @@ export default function App() {
 
   // Native Platform Lifecycle
   useEffect(() => {
+    // PWA Installation logic
+    const handleBeforeInstall = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowInstallBtn(true);
+    };
+
+    const handleAppInstalled = () => {
+      setShowInstallBtn(false);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    let backListener: any = null;
+    
     if (Capacitor.isNativePlatform()) {
       // Configure Status Bar
       StatusBar.setStyle({ style: Style.Dark });
       
       // Handle Android Back Button
-      const backListener = AppPlugin.addListener('backButton', ({ canGoBack }) => {
+      backListener = AppPlugin.addListener('backButton', ({ canGoBack }) => {
         if (!canGoBack) {
           if (showControls) {
             setShowControls(false);
@@ -158,11 +177,15 @@ export default function App() {
           }
         }
       });
-
-      return () => {
-        backListener.remove();
-      };
     }
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+      if (backListener) {
+        backListener.remove();
+      }
+    };
   }, [showControls]);
 
   useEffect(() => {
@@ -664,6 +687,16 @@ export default function App() {
     }
   };
 
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setShowInstallBtn(false);
+      setDeferredPrompt(null);
+    }
+  };
+
   const setupAudioPipeline = async (stream: MediaStream) => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -986,6 +1019,17 @@ export default function App() {
                       className="glass-pill p-2 sm:p-3 text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
                     >
                       <Download size={18} />
+                    </motion.button>
+                  )}
+                  {showInstallBtn && (
+                    <motion.button
+                      onClick={handleInstallClick}
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      className="glass-pill p-2 sm:p-3 text-green-400 hover:text-green-300 transition-colors cursor-pointer"
+                      title="Install as Software"
+                    >
+                      <Activity size={18} />
                     </motion.button>
                   )}
                   <motion.button

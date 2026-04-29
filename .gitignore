@@ -1,8 +1,11 @@
+dist/
+dist_electron/
 node_modules/
 build/
-dist/
 coverage/
 .DS_Store
 *.log
 .env*
 !.env.example
+handbook_extracted_7z/
+*.7z
